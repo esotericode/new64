@@ -1,8 +1,13 @@
 build/
+build-win/
 out/
 out*/
 *.o
 *.a
+
+# The packaged Windows zip is committed so it can be downloaded from GitHub.
+# The unpacked staging directory it is built from is not.
+dist/new64-windows-x64/
 
 # Files dropped into slot/ are third-party movement sources. They stay local
 # unless deliberately committed -- see docs/SLOTTING_IN_DECOMP.md.

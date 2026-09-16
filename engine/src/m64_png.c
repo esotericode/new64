@@ -8,10 +8,11 @@
  */
 #include "m64_image.h"
 
+#include "m64_deflate.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <zlib.h>
 
 static void put_u32be(u8 *p, u32 v) {
     p[0] = (u8) (v >> 24);
@@ -23,7 +24,7 @@ static void put_u32be(u8 *p, u32 v) {
 static s32 write_chunk(FILE *f, const char *type, const u8 *data, u32 len) {
     u8 header[8];
     u8 crcBuf[4];
-    uLong crc;
+    u32 crc;
 
     put_u32be(header, len);
     memcpy(header + 4, type, 4);
@@ -35,11 +36,11 @@ static s32 write_chunk(FILE *f, const char *type, const u8 *data, u32 len) {
     }
 
     /* CRC covers the type and the data, but not the length. */
-    crc = crc32(0L, (const Bytef *) type, 4);
+    crc = m64_crc32(0, (const u8 *) type, 4);
     if (len > 0) {
-        crc = crc32(crc, (const Bytef *) data, len);
+        crc = m64_crc32(crc, data, len);
     }
-    put_u32be(crcBuf, (u32) crc);
+    put_u32be(crcBuf, crc);
     if (fwrite(crcBuf, 1, 4, f) != 4) {
         return -1;
     }
@@ -52,7 +53,8 @@ s32 m64_png_write(const char *path, const u32 *pixels, s32 width, s32 height) {
     u8 ihdr[13];
     u8 *raw;
     u8 *compressed;
-    uLongf compressedLen;
+    size_t compressedCap;
+    size_t compressedLen;
     size_t rawLen;
     s32 x, y;
     s32 result = -1;
@@ -81,13 +83,14 @@ s32 m64_png_write(const char *path, const u32 *pixels, s32 width, s32 height) {
         }
     }
 
-    compressedLen = compressBound((uLong) rawLen);
-    compressed = (u8 *) malloc(compressedLen);
+    compressedCap = m64_compress_bound(rawLen);
+    compressed = (u8 *) malloc(compressedCap);
     if (compressed == NULL) {
         free(raw);
         return -1;
     }
-    if (compress2(compressed, &compressedLen, raw, (uLong) rawLen, 6) != Z_OK) {
+    compressedLen = m64_zlib_compress(raw, rawLen, compressed, compressedCap);
+    if (compressedLen == 0) {
         free(raw);
         free(compressed);
         return -1;

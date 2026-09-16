@@ -25,6 +25,21 @@
 #include <stdlib.h>
 #include <string.h>
 
+/*
+ * Directory creation is the one place this runner touches the platform.
+ * It was previously a system("mkdir -p") shell-out, which is POSIX-only and
+ * also hands a user-supplied path to a shell -- neither acceptable once this
+ * builds for Windows.
+ */
+#ifdef _WIN32
+#include <direct.h>
+#define m64_mkdir(path) _mkdir(path)
+#else
+#include <sys/stat.h>
+#include <sys/types.h>
+#define m64_mkdir(path) mkdir((path), 0777)
+#endif
+
 struct Options {
     const char *scriptName;
     const char *scriptFile;
@@ -127,6 +142,45 @@ static s32 parse_options(struct Options *o, s32 argc, char **argv) {
         }
     }
     return 0;
+}
+
+/*
+ * Create a directory and any missing parents, portably.
+ *
+ * Walks the path creating each component in turn, which is what made the
+ * original shell-out convenient; doing it directly avoids both the POSIX
+ * dependency and passing a path through a shell.
+ */
+static void ensure_directory(const char *dir) {
+    char buf[512];
+    size_t len;
+    size_t i;
+
+    if (dir == NULL || dir[0] == '\0') {
+        return;
+    }
+    len = strlen(dir);
+    if (len >= sizeof(buf)) {
+        return;
+    }
+    memcpy(buf, dir, len + 1);
+
+    /* Drop a trailing separator so the final component is created by the
+     * call after the loop rather than being missed. */
+    while (len > 1 && (buf[len - 1] == '/' || buf[len - 1] == '\\')) {
+        buf[--len] = '\0';
+    }
+
+    for (i = 1; i < len; i++) {
+        if (buf[i] == '/' || buf[i] == '\\') {
+            char saved = buf[i];
+
+            buf[i] = '\0';
+            m64_mkdir(buf);
+            buf[i] = saved;
+        }
+    }
+    m64_mkdir(buf);
 }
 
 /* The live state readout drawn over each frame. */
@@ -284,14 +338,19 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Output directory; ignore failure, the file writes will report it. */
-    snprintf(path, sizeof(path), "mkdir -p '%s'", opt.outDir);
-    if (system(path) != 0) {
-        /* Non-fatal: the directory may already exist. */
-    }
+    /* Create the output directory. Failure is non-fatal and usually just means
+     * it already exists; a genuine problem surfaces when a file write fails. */
+    ensure_directory(opt.outDir);
 
     if (opt.tracePath != NULL) {
-        traceFile = fopen(opt.tracePath, "w");
+        /*
+         * Binary mode deliberately: on Windows, text mode would translate \n to
+         * \r\n and the trace would no longer be byte-comparable against one
+         * produced on another platform. Diffing traces across platforms (and
+         * before/after a change) is the main way this engine is verified, so
+         * the output must be identical everywhere.
+         */
+        traceFile = fopen(opt.tracePath, "wb");
         if (traceFile == NULL) {
             fprintf(stderr, "new64: could not open trace '%s'\n", opt.tracePath);
         }

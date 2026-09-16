@@ -60,10 +60,26 @@ Not implemented: swimming, and anything needing objects (grabbing, riding,
 enemies). The demo level has no water and no objects. `perform_water_step()`
 exists and works, so a submerged implementation can be slotted in.
 
+## Windows: just run it
+
+Prebuilt x64 binaries: **[dist/new64-windows-x64.zip](dist/new64-windows-x64.zip)**
+
+Unzip and double-click `new64_play.exe`. Three files, no installer, nothing to
+copy alongside them — the executables import only DLLs that ship with Windows.
+They are unsigned, so SmartScreen will warn; "More info" → "Run anyway", or
+build from source below.
+
+**Use a gamepad if you have one.** An Xbox-style controller is picked up
+automatically via XInput, and this is a fidelity matter rather than comfort: the
+stick response is quadratic, so half deflection gives a quarter speed. The
+entire low end of that curve — creeping, walking, the tiptoe — is unreachable on
+a keyboard, which can only ever report full deflection.
+
 ## Build and run
 
-Needs a C11 compiler, CMake ≥ 3.13, and zlib. X11 headers are optional (for the
-interactive front-end).
+Needs a C11 compiler and CMake ≥ 3.13. **No external dependencies** — deflate,
+PNG and GIF are all implemented in-tree. X11 headers are optional, for the
+interactive front-end on Linux.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -112,6 +128,20 @@ The bracketed tags are sound cues the state machine raised that frame. There is
 no audio engine — the cues are recorded instead of played, which makes "the
 landing was recognised on frame 56" directly checkable.
 
+**Cross-compile for Windows** from Linux (`apt install mingw-w64`, nothing else):
+
+```sh
+./scripts/build-windows.sh        # builds, checks DLL imports, writes the zip
+```
+
+or by hand:
+
+```sh
+cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake \
+      -DCMAKE_BUILD_TYPE=Release
+cmake --build build-win -j
+```
+
 **Test it:**
 
 ```sh
@@ -122,6 +152,11 @@ landing was recognised on frame 56" directly checkable.
 floor buffer, wall pushout) and the movement constants (every jump's launch
 velocity, terminal velocity, the walk speed cap, slope class thresholds, the
 jump chain, the wall kick window).
+
+The Linux and Windows builds are verified to produce **byte-identical** output:
+all 96 assertions pass on both, and every demo's state trace and every rendered
+PNG and GIF match exactly across platforms. That is what `-ffp-contract=off` and
+the committed sine table are for — the physics must not depend on the compiler.
 
 ## Slotting in decomp code
 
