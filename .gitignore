@@ -1,0 +1,10 @@
+build/
+out/
+out*/
+*.o
+*.a
+
+# Files dropped into slot/ are third-party movement sources. They stay local
+# unless deliberately committed -- see docs/SLOTTING_IN_DECOMP.md.
+slot/*.c
+slot/*.h

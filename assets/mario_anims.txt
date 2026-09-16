@@ -1,0 +1,71 @@
+# new64 -- animation frame counts.
+#
+# One "NAME FRAMES" pair per line. These lengths are PHYSICS, not decoration:
+# several actions end when their animation ends (is_anim_at_end), so a wrong
+# count makes that state last the wrong number of frames.
+#
+# The values below are plausible placeholders, NOT measured data. new64's own
+# action code uses explicit timers wherever duration matters, so these defaults
+# cannot make the reference implementation wrong -- but movement code slotted in
+# from elsewhere may well branch on animation end, and then these matter.
+#
+# To get exact behaviour, replace these with real per-animation frame counts and
+# load with m64_anim_load_table() before init_mario(). Only the counts are
+# needed; no skeletal data, since the character is a capsule.
+
+MARIO_ANIM_IDLE_HEAD_LEFT           42
+MARIO_ANIM_IDLE_HEAD_RIGHT          42
+MARIO_ANIM_IDLE_HEAD_CENTER         42
+MARIO_ANIM_WALKING                  24
+MARIO_ANIM_RUNNING                  16
+MARIO_ANIM_TIPTOE                   24
+MARIO_ANIM_START_TIPTOE             10
+MARIO_ANIM_SKID_ON_GROUND           12
+MARIO_ANIM_STOP_SKID                12
+MARIO_ANIM_TURNING_PART1            10
+MARIO_ANIM_TURNING_PART2            10
+MARIO_ANIM_START_CROUCHING           6
+MARIO_ANIM_CROUCHING                24
+MARIO_ANIM_STOP_CROUCHING            6
+MARIO_ANIM_START_CRAWLING            6
+MARIO_ANIM_CRAWLING                 26
+MARIO_ANIM_STOP_CRAWLING             6
+MARIO_ANIM_SINGLE_JUMP              12
+MARIO_ANIM_LAND_FROM_SINGLE_JUMP     8
+MARIO_ANIM_DOUBLE_JUMP_RISE         12
+MARIO_ANIM_DOUBLE_JUMP_FALL         12
+MARIO_ANIM_LAND_FROM_DOUBLE_JUMP     8
+MARIO_ANIM_TRIPLE_JUMP              20
+MARIO_ANIM_TRIPLE_JUMP_LAND         10
+MARIO_ANIM_BACKFLIP                 20
+MARIO_ANIM_SLIDEFLIP                20
+MARIO_ANIM_SLIDEFLIP_LAND           10
+MARIO_ANIM_FAST_LONGJUMP            18
+MARIO_ANIM_SLOW_LONGJUMP            18
+MARIO_ANIM_CROUCH_FROM_FAST_LONGJUMP 10
+MARIO_ANIM_CROUCH_FROM_SLOW_LONGJUMP 10
+MARIO_ANIM_GENERAL_FALL             12
+MARIO_ANIM_GENERAL_LAND              8
+MARIO_ANIM_DIVE                     12
+MARIO_ANIM_SLIDE_DIVE               12
+MARIO_ANIM_SLIDE                    12
+MARIO_ANIM_STOP_SLIDE               12
+MARIO_ANIM_SLIDE_KICK               18
+MARIO_ANIM_CROUCH_FROM_SLIDE_KICK   10
+MARIO_ANIM_FALL_FROM_SLIDE_KICK     12
+MARIO_ANIM_START_GROUND_POUND       10
+MARIO_ANIM_GROUND_POUND             12
+MARIO_ANIM_GROUND_POUND_LANDING     12
+MARIO_ANIM_AIR_KICK                 12
+MARIO_ANIM_START_WALLKICK            6
+MARIO_ANIM_SLIDEJUMP                12
+MARIO_ANIM_FORWARD_SPINNING         16
+MARIO_ANIM_BACKWARD_SPINNING        16
+MARIO_ANIM_IDLE_ON_LEDGE            24
+MARIO_ANIM_SLOW_LEDGE_GRAB          34
+MARIO_ANIM_FAST_LEDGE_GRAB          16
+MARIO_ANIM_CLIMB_DOWN_LEDGE         12
+MARIO_ANIM_FIRST_PUNCH_FAST          8
+MARIO_ANIM_PUSHING                  16
+MARIO_ANIM_STAND_AGAINST_WALL       24
+MARIO_ANIM_A_POSE                   12
