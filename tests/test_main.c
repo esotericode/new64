@@ -23,7 +23,9 @@
 #include "game_init.h"
 #include "mario_actions_airborne.h"
 #include "mario_actions_moving.h"
+#include "m64_camera.h"
 #include "m64_level.h"
+#include "m64_render.h"
 #include "m64_surface.h"
 #include "mario.h"
 #include "mario_step.h"
@@ -102,6 +104,16 @@ static void setup_flat_world(void) {
      * world space directly. */
     init_mario();
     sWorld.camera.yaw = 0x8000;
+}
+
+/* Steps with the camera left free to follow, for tests about how steering and
+ * the follow camera interact. */
+static void step_world_free_camera(s16 stickX, s16 stickY, u16 buttons, s32 frames) {
+    s32 i;
+
+    for (i = 0; i < frames; i++) {
+        m64_world_step(&sWorld, stickX, stickY, buttons, 0);
+    }
 }
 
 static void step_world(s16 stickX, s16 stickY, u16 buttons, s32 frames) {
@@ -714,66 +726,128 @@ static void test_wall_kick_window(void) {
 /* --- Regressions ------------------------------------------------------- */
 
 /*
- * Stick direction must map to the world relative to the camera, in the
- * orientation a player expects. This shipped mirrored on the horizontal axis --
- * pushing right walked the player left -- which reads as the controls being
- * broken rather than as one wrong sign, and is invisible in a level with
- * symmetric geometry until you try to steer somewhere specific.
+ * Stick direction must map to the screen the way a player expects: push right,
+ * go right ON SCREEN.
+ *
+ * This is checked by rendering a frame and looking at where the player actually
+ * ended up in the image, rather than by asserting a world axis. That matters
+ * because the obvious world-space assertion ("stick right increases X") is only
+ * correct if you already know the renderer's handedness -- and if you get that
+ * wrong, the test and the code agree with each other while the controls are
+ * inverted for the person holding the pad. Pixels cannot be argued with.
  */
-static void test_stick_directions(void) {
-    struct {
-        s16 stickX;
-        s16 stickY;
-        const char *name;
-        s32 axis;      /* 0 = X, 2 = Z */
-        f32 sign;      /* expected direction of travel on that axis */
-    } cases[] = {
-        {   0,  80, "stick up moves away from the camera (north)", 2,  1.0f },
-        {   0, -80, "stick down moves toward the camera (south)",  2, -1.0f },
-        {  80,   0, "stick right moves right of the camera (east)", 0,  1.0f },
-        { -80,   0, "stick left moves left of the camera (west)",   0, -1.0f },
-    };
-    s32 i;
+static s32 rendered_player_column(struct M64World *w, struct M64Framebuffer *fb) {
+    long sum = 0;
+    long count = 0;
+    s32 x, y;
 
-    section("stick to world mapping");
+    /*
+     * Render from a FIXED viewpoint south of the origin, not from the follow
+     * camera. The follow camera re-centres on the player every frame, so with
+     * it the player never moves on screen at all and there is nothing to
+     * measure. The fixed eye turns world displacement into screen displacement.
+     */
+    Vec3f eye = { 0.0f, 350.0f, -900.0f };
+    Vec3f focus = { 0.0f, 120.0f, 0.0f };
 
-    for (i = 0; i < 4; i++) {
-        f32 start;
-        f32 moved;
+    m64_fb_clear_sky(fb);
+    m64_render_set_camera(fb, eye, focus, 55.0f);
+    m64_render_capsule(fb, w->marioState.pos, w->marioState.faceAngle[1], 45.0f, 160.0f,
+                       0xE04040);
 
-        setup_flat_world();
-        /* Camera due south of the player: away-from-camera is +Z. */
-        sWorld.camera.yaw = (s16) 0x8000;
-        sWorld.viewCam.yaw = (s16) 0x8000;
+    /* The capsule is the only strongly red thing in frame. */
+    for (y = 0; y < fb->height; y++) {
+        for (x = 0; x < fb->width; x++) {
+            u32 c = fb->color[y * fb->width + x];
+            s32 r = (s32) ((c >> 16) & 0xFF);
+            s32 g = (s32) ((c >> 8) & 0xFF);
+            s32 b = (s32) (c & 0xFF);
 
-        start = sWorld.marioState.pos[cases[i].axis];
-        step_world(cases[i].stickX, cases[i].stickY, 0, 25);
-        moved = sWorld.marioState.pos[cases[i].axis] - start;
-
-        check(moved * cases[i].sign > 100.0f, cases[i].name);
+            if (r > 120 && g < 80 && b < 80) {
+                sum += x;
+                count++;
+            }
+        }
     }
-
-    /* And the cross-axis must stay put: a pure right push must not drift
-     * forwards or backwards. */
-    setup_flat_world();
-    sWorld.camera.yaw = (s16) 0x8000;
-    sWorld.viewCam.yaw = (s16) 0x8000;
-    {
-        f32 startZ = sWorld.marioState.pos[2];
-
-        step_world(80, 0, 0, 25);
-        check(sWorld.marioState.pos[2] - startZ < 60.0f
-                  && sWorld.marioState.pos[2] - startZ > -60.0f,
-              "a pure sideways push does not drift along the camera axis");
-    }
+    return count > 0 ? (s32) (sum / count) : -1;
 }
 
+static void test_stick_directions(void) {
+    struct M64Framebuffer fb;
+    s32 centre;
 
+    section("stick maps to the screen correctly");
+
+    if (m64_fb_create(&fb, 640, 360) != 0) {
+        check(FALSE, "framebuffer for the render check");
+        return;
+    }
+    centre = fb.width / 2;
+
+    /* Camera yaw 0x8000 puts the viewpoint due south of the player. */
+    setup_flat_world();
+    sWorld.camera.yaw = (s16) 0x8000;
+    step_world(80, 0, 0, 22);
+    check(rendered_player_column(&sWorld, &fb) > centre + 40,
+          "stick RIGHT moves the player right on screen");
+
+    setup_flat_world();
+    sWorld.camera.yaw = (s16) 0x8000;
+    step_world(-80, 0, 0, 22);
+    {
+        s32 col = rendered_player_column(&sWorld, &fb);
+
+        check(col > 0 && col < centre - 40, "stick LEFT moves the player left on screen");
+    }
+
+    m64_fb_destroy(&fb);
+
+    /*
+     * Forward and back need no rendering: the viewpoint sits at negative Z, so
+     * "away from the camera" is simply increasing Z. No handedness involved.
+     */
+    setup_flat_world();
+    sWorld.camera.yaw = (s16) 0x8000;
+    step_world(0, 80, 0, 22);
+    check(sWorld.marioState.pos[2] > 100.0f,
+          "stick UP moves the player away from the camera");
+
+    setup_flat_world();
+    sWorld.camera.yaw = (s16) 0x8000;
+    step_world(0, -80, 0, 22);
+    check(sWorld.marioState.pos[2] < -100.0f,
+          "stick DOWN moves the player toward the camera");
+}
 
 /*
- * These four all shipped broken and were reported from play rather than caught
- * by the suite, so each gets a test that would have failed before the fix.
+ * Holding the stick straight ahead must run straight. The camera auto-follows
+ * the player's facing, so any error between "what the stick asked for" and
+ * "where the camera thinks behind is" gets fed back every frame -- if it does
+ * not cancel exactly, the player curves away on their own and the controls feel
+ * like they are drifting.
  */
+static void test_straight_running_does_not_drift(void) {
+    s16 startYaw;
+    s16 drift;
+
+    section("straight running stability");
+
+    setup_flat_world();
+    startYaw = sWorld.marioState.faceAngle[1];
+
+    /* Camera left free to follow, as in normal play. */
+    step_world_free_camera(0, 80, 0, 120);
+
+    drift = (s16) (sWorld.marioState.faceAngle[1] - startYaw);
+    if (drift < 0) {
+        drift = (s16) -drift;
+    }
+
+    /* Under an eighth of a turn over four seconds of running. */
+    check(drift < 0x800, "holding forward for 120 frames does not curve away");
+    check(sWorld.marioState.pos[0] > -250.0f && sWorld.marioState.pos[0] < 250.0f,
+          "holding forward stays on the lane it started in");
+}
 
 static void test_double_jump_keeps_speed(void) {
     section("double jump preserves momentum");
@@ -1068,6 +1142,7 @@ int main(void) {
     test_dive_threshold();
     test_wall_kick_window();
     test_stick_directions();
+    test_straight_running_does_not_drift();
     test_double_jump_keeps_speed();
     test_turnaround_completes();
     test_turnaround_facing_is_stable();

@@ -1077,20 +1077,19 @@ static void update_mario_joystick_inputs(struct MarioState *m) {
         /*
          * Stick direction -> world direction, relative to the camera.
          *
-         * camera->yaw points from the player TOWARD the camera, so the
-         * away-from-camera direction -- what "stick up" means -- is camYaw plus
-         * half a turn. atan2s(stickY, stickX) then measures the stick's own
-         * angle with up as 0 and right as a quarter turn, and adding the two
-         * lands on the world direction.
+         * Do not "correct" the negated stickY without checking what the
+         * renderer actually does. The camera basis is right = cross(forward,
+         * up), which with Y up means that looking along +Z puts screen-right at
+         * world -X. So the horizontal term genuinely is mirrored relative to
+         * world X, and this formula is right. Flipping it to match an intuition
+         * about handedness inverts the controls -- which is a bug you cannot
+         * see in a symmetric level and which no world-space assertion will
+         * catch, because the assertion encodes the same intuition.
          *
-         * The sign of the stickX term is the whole ball game here: negating it
-         * mirrors the horizontal axis, so pushing right walks the player left.
-         * That reads as the controls being broken rather than as a bug in one
-         * formula, which is why the four cardinal directions are asserted in
-         * the test suite rather than left to inspection.
+         * test_stick_directions() guards this by rendering a frame and looking
+         * at which side of the screen the player moved toward.
          */
-        m->intendedYaw = (s16) (camYaw + 0x8000
-                                + atan2s(controller->stickY, controller->stickX));
+        m->intendedYaw = atan2s(-controller->stickY, controller->stickX) + camYaw;
         m->input |= INPUT_NONZERO_ANALOG;
     } else {
         /* No stick: intend to keep facing where we already face, so that code
