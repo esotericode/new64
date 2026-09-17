@@ -41,6 +41,32 @@ void m64_level_add_ramp(s16 type, s32 axis, f32 x0, f32 z0, f32 x1, f32 z1, f32 
 void m64_level_add_box(s16 type, f32 x0, f32 z0, f32 x1, f32 z1, f32 yBottom, f32 yTop);
 
 /*
+ * Solid ramp: a triangular prism with a sloped top, two vertical sides, a
+ * vertical back face and a closed underside.
+ *
+ * Prefer this over add_ramp for anything the player walks on.  A bare sloped
+ * quad has no thickness, so from the side it is an infinitely thin sheet and
+ * from below it is invisible -- it reads as a floating artifact rather than as
+ * a ramp.  The wedge is unambiguous from every angle.
+ *
+ * The slope ascends along +Z, from yBase at z0 to yTop at z1.
+ */
+void m64_level_add_wedge(s16 type, f32 x0, f32 z0, f32 x1, f32 z1, f32 yBase, f32 yTop);
+
+/*
+ * A wall-kick shaft: two parallel walls facing each other across `width`, with
+ * their outer sides closed off so they read as solid slabs rather than as
+ * one-sided sheets.
+ *
+ * `width` is the clear gap between the inner faces, which is the number that
+ * decides how hard the shaft is to climb: the crossing takes width/25 frames at
+ * typical post-kick speed, against a kick that gives roughly 13 frames of
+ * useful rise.
+ */
+void m64_level_add_wall_kick_shaft(s16 type, f32 centerX, f32 z0, f32 z1, f32 width,
+                                   f32 height, f32 thickness);
+
+/*
  * Build the demo level and report where the player should start.
  *
  * The layout is deliberately a *test rig* rather than a pretty scene: every

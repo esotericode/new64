@@ -628,7 +628,19 @@ static s32 act_turning_around(struct MarioState *m) {
         return TRUE;
     }
 
-    apply_slope_decel(m, 2.0f);
+    /*
+     * This return value is the whole point of the state.  A turnaround is
+     * "spend the old momentum, then commit to the new direction", and
+     * apply_slope_decel() reporting TRUE is what says the momentum is spent.
+     *
+     * Discarding it strands the action: speed reaches zero but nothing notices,
+     * and the animation-end fallback below then hands off to braking instead,
+     * so a full 180 turn ends with the player standing still facing the
+     * original direction.
+     */
+    if (apply_slope_decel(m, 2.0f)) {
+        return set_mario_action(m, ACT_FINISH_TURNING_AROUND, 0);
+    }
 
     switch (perform_ground_step(m)) {
         case GROUND_STEP_LEFT_GROUND:
@@ -641,7 +653,8 @@ static s32 act_turning_around(struct MarioState *m) {
             break;
     }
 
-    /* Once the old momentum is spent, commit to the new direction. */
+    /* Animation-end fallback, for the case where the floor is too slippery for
+     * deceleration to ever reach exactly zero. */
     if (m->forwardVel >= 18.0f) {
         set_mario_animation(m, MARIO_ANIM_TURNING_PART1);
     } else {
@@ -665,6 +678,8 @@ static s32 act_finish_turning_around(struct MarioState *m) {
         return set_jumping_action(m, ACT_SIDE_FLIP, 0);
     }
 
+    /* Eases facing toward the stick at 0x800/frame and rebuilds speed in the
+     * new direction. This is what actually performs the turn. */
     update_walking_speed(m);
     set_mario_animation(m, MARIO_ANIM_TURNING_PART2);
 
@@ -675,7 +690,15 @@ static s32 act_finish_turning_around(struct MarioState *m) {
         set_mario_action(m, ACT_WALKING, 0);
     }
 
-    m->faceAngle[1] += 0x8000;
+    /*
+     * Flip the DISPLAYED yaw only, because the turn animation is authored
+     * facing backwards.  This must not touch m->faceAngle[1]: that is the
+     * collision facing that forwardVel is applied along, and rotating it by
+     * half a turn every frame makes the player oscillate between two opposite
+     * directions and go nowhere.  perform_ground_step() rewrites the graphics
+     * angle from faceAngle, so the flip has to come after it.
+     */
+    m->marioObj->header.gfx.angle[1] += 0x8000;
     return FALSE;
 }
 

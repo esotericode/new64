@@ -115,7 +115,8 @@ state trace. This is how the engine is actually verified:
 ```
 
 Built-in demos: `walk`, `jumpchain`, `jumpheight`, `longjump`, `wallkick`,
-`backflip`, `slopes`, `ice`, `dive`, `groundpound`, `ledgegrab`, `tour`.
+`wallshafts`, `turnaround`, `sideflip`, `backflip`, `slopes`, `ice`, `dive`,
+`groundpound`, `ledgegrab`, `tour`.
 
 Each one isolates a single mechanic and its script explains what to expect. A
 trace line looks like:
@@ -148,10 +149,12 @@ cmake --build build-win -j
 ./build/new64_tests
 ```
 
-96 assertions covering the substrate (angle quantisation, s16 truncation, the
-floor buffer, wall pushout) and the movement constants (every jump's launch
+163 assertions covering the substrate (angle quantisation, s16 truncation, the
+floor buffer, wall pushout), the movement constants (every jump's launch
 velocity, terminal velocity, the walk speed cap, slope class thresholds, the
-jump chain, the wall kick window).
+jump chain, the wall kick window, the stick-to-world mapping), and the level's
+own geometry — that every ramp is a standable slope rather than an inside-out
+ceiling, and every landmark has ground under it.
 
 The Linux and Windows builds are verified to produce **byte-identical** output:
 all 96 assertions pass on both, and every demo's state trace and every rendered

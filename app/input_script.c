@@ -97,10 +97,14 @@ s32 m64_script_parse(struct M64Script *script, const char *text, const char *nam
             s32 sx = 0, sy = 0;
             s32 period = 0;
             char buttons[32] = "-";
+            s32 flipPeriod = 0;
+            s32 fields = sscanf(buf, "mash %d %d %d %31s %d %d", &frames, &sx, &sy,
+                                buttons, &period, &flipPeriod);
 
-            if (sscanf(buf, "mash %d %d %d %31s %d", &frames, &sx, &sy, buttons, &period)
-                == 5) {
+            if (fields >= 5) {
                 s32 remaining = frames;
+                s32 elapsed = 0;
+                s32 flipped = FALSE;
 
                 if (period < 2) {
                     period = 2;
@@ -108,14 +112,30 @@ s32 m64_script_parse(struct M64Script *script, const char *text, const char *nam
                 while (remaining > 0 && script->spanCount < M64_SCRIPT_MAX_SPANS - 1) {
                     struct M64InputSpan *on = &script->spans[script->spanCount++];
                     s32 offFrames;
+                    s16 curX, curY;
+
+                    /*
+                     * The optional flip period reverses the stick every N
+                     * frames.  It exists for alternating manoeuvres -- climbing
+                     * a wall-kick shaft is the motivating case, where facing
+                     * flips on every kick and a fixed stick direction would
+                     * fight every other one, reversing your drift mid-air
+                     * before you ever reach the opposite wall.
+                     */
+                    if (flipPeriod > 0) {
+                        flipped = ((elapsed / flipPeriod) & 1) != 0;
+                    }
+                    curX = (s16) (flipped ? -sx : sx);
+                    curY = (s16) (flipped ? -sy : sy);
 
                     on->frames = 1;
-                    on->stickX = (s16) sx;
-                    on->stickY = (s16) sy;
+                    on->stickX = curX;
+                    on->stickY = curY;
                     on->buttonDown = parse_buttons(buttons);
                     on->camTurn = 0;
                     script->totalFrames += 1;
                     remaining -= 1;
+                    elapsed += 1;
 
                     offFrames = period - 1;
                     if (offFrames > remaining) {
@@ -125,12 +145,13 @@ s32 m64_script_parse(struct M64Script *script, const char *text, const char *nam
                         struct M64InputSpan *off = &script->spans[script->spanCount++];
 
                         off->frames = offFrames;
-                        off->stickX = (s16) sx;
-                        off->stickY = (s16) sy;
+                        off->stickX = curX;
+                        off->stickY = curY;
                         off->buttonDown = 0;
                         off->camTurn = 0;
                         script->totalFrames += offFrames;
                         remaining -= offFrames;
+                        elapsed += offFrames;
                     }
                 }
                 continue;
@@ -268,7 +289,7 @@ static const char sScriptLongJump[] =
     "# Long jump: crouch-slide (Z while running) then A within 30 frames.\n"
     "# Forward speed is multiplied by 1.5 and gravity is halved, so it covers\n"
     "# far more ground than a running jump despite launching at only 30.\n"
-    "warp gap_near\n"
+    "warp gap_start\n"
     "face 90        # the gap runs along +X\n"
     "camyaw 270\n"
     "5  0 0 -\n"
@@ -281,8 +302,8 @@ static const char sScriptWallKick[] =
     "# Wall kick. Running into a wall enters ACT_AIR_HIT_WALL, which accepts A\n"
     "# for exactly two frames. A successful kick sets vertical velocity to 52\n"
     "# and flips facing 180 degrees.\n"
-    "warp wallkick_corridor\n"
-    "face 0          # run north into the shaft, at its back wall\n"
+    "warp shaft_narrow\n"
+    "face 0          # run north into the 300-wide shaft\n"
     "camyaw 180\n"
     "34 0 80 -       # build past 16 forward speed: below that a wall hit is\n"
     "                # just a stop, and no kick is offered at all\n"
@@ -351,6 +372,50 @@ static const char sScriptLedgeGrab[] =
     "2  0 0 A    # climb up\n"
     "40 0 0 -\n";
 
+static const char sScriptTurnaround[] =
+    "# Full 180 reversal. Running one way and slamming the stick the other\n"
+    "# enters ACT_TURNING_AROUND, which spends the old momentum, hands off to\n"
+    "# ACT_FINISH_TURNING_AROUND, and rebuilds speed in the new direction.\n"
+    "# Watch vel Z go strongly positive, through zero, then strongly negative.\n"
+    "face 0\n"
+    "camyaw 180\n"
+    "45 0 80 -       # run north up to the 32 speed cap\n"
+    "80 0 -80 -      # slam the stick south\n";
+
+static const char sScriptSideFlip[] =
+    "# Side flip: press A *during* a turnaround, before the reversal finishes.\n"
+    "# Launches at 62, the same height as a backflip, and is the only way to\n"
+    "# get that height while already moving. A is tapped every 3 frames so the\n"
+    "# press lands inside the turnaround rather than on a hand-counted frame.\n"
+    "face 0\n"
+    "camyaw 180\n"
+    "45 0 80 -       # run north\n"
+    "6  0 -80 -      # reverse the stick: enters TURNING_AROUND\n"
+    "mash 40 0 -80 A 3\n"
+    "50 0 -80 -\n";
+
+static const char sScriptWallShafts[] =
+    "# One wall kick inside the 300-wide shaft, from a standing start.\n"
+    "#\n"
+    "# The two facing walls are perpendicular to X, so a climb means bouncing\n"
+    "# ACROSS the gap rather than running along the shaft. A kick needs more\n"
+    "# than 16 forward speed at contact, which takes about 170 units of\n"
+    "# run-up -- so even this narrow gap is just enough to earn one.\n"
+    "#\n"
+    "# It stops at one kick on purpose. Chaining them needs the stick pointed\n"
+    "# at each wall AS you reach it, and since facing flips on every kick that\n"
+    "# means reversing the stick in reaction to each one. A fixed input cannot\n"
+    "# do it: hold one direction and air control cancels your drift before you\n"
+    "# cross. Climbing a shaft is a thing to feel on a controller, not to\n"
+    "# script. Watch instead for the kick itself -- vertical 52, facing flipped\n"
+    "# half a turn, about 364 units of height gained from one contact.\n"
+    "warp shaft_narrow_in\n"
+    "face 90         # face east, at the far wall\n"
+    "camyaw 180\n"
+    "18 80 0 -       # cross the gap, building past the 16 speed a kick needs\n"
+    "mash 40 80 0 A 2\n"
+    "60 0 0 -\n";
+
 static const char sScriptTour[] =
     "# The headline run: accelerate to top speed, chain jumps up to a triple,\n"
     "# steer, dive, and brake to a stop. Meant to be watched rather than read.\n"
@@ -375,6 +440,9 @@ static const struct BuiltinScript sBuiltins[] = {
     { "jumpheight", sScriptJumpHeight },
     { "longjump", sScriptLongJump },
     { "wallkick", sScriptWallKick },
+    { "wallshafts", sScriptWallShafts },
+    { "turnaround", sScriptTurnaround },
+    { "sideflip", sScriptSideFlip },
     { "backflip", sScriptBackflip },
     { "slopes", sScriptSlopes },
     { "ice", sScriptIce },

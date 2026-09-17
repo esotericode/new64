@@ -649,12 +649,32 @@ static u32 set_mario_action_airborne(struct MarioState *m, u32 action, u32 actio
     switch (action) {
         case ACT_DOUBLE_JUMP:
             set_mario_y_vel_based_on_fspeed(m, 52.0f, 0.25f);
-            m->forwardVel = 0.0f;
+            /*
+             * Sheds a fifth of forward speed -- it does NOT stop you.  A double
+             * jump is the middle of a chain performed at a run, so zeroing
+             * speed here would bring a running player to a dead halt in mid-air
+             * and make the chain unusable for covering ground.
+             */
+            m->forwardVel *= 0.8f;
             break;
 
         case ACT_BACKFLIP:
             m->marioObj->header.gfx.animInfo.animID = -1;
             m->forwardVel = -16.0f;
+            set_mario_y_vel_based_on_fspeed(m, 62.0f, 0.0f);
+            break;
+
+        /*
+         * A side flip shares the backflip's launch height.  Without a case here
+         * it fell through with whatever vertical velocity it already had --
+         * i.e. zero -- so pressing A during a turnaround produced no jump at
+         * all, which is what made the move look missing rather than wrong.
+         *
+         * Forward speed is left alone: a side flip is entered mid-turn, when
+         * speed has already been bled off by the turnaround.
+         */
+        case ACT_SIDE_FLIP:
+            m->marioObj->header.gfx.animInfo.animID = -1;
             set_mario_y_vel_based_on_fspeed(m, 62.0f, 0.0f);
             break;
 
@@ -1054,7 +1074,23 @@ static void update_mario_joystick_inputs(struct MarioState *m) {
     if (m->intendedMag > 0.0f) {
         s16 camYaw = (m->area != NULL && m->area->camera != NULL) ? m->area->camera->yaw : 0;
 
-        m->intendedYaw = atan2s(-controller->stickY, controller->stickX) + camYaw;
+        /*
+         * Stick direction -> world direction, relative to the camera.
+         *
+         * camera->yaw points from the player TOWARD the camera, so the
+         * away-from-camera direction -- what "stick up" means -- is camYaw plus
+         * half a turn. atan2s(stickY, stickX) then measures the stick's own
+         * angle with up as 0 and right as a quarter turn, and adding the two
+         * lands on the world direction.
+         *
+         * The sign of the stickX term is the whole ball game here: negating it
+         * mirrors the horizontal axis, so pushing right walks the player left.
+         * That reads as the controls being broken rather than as a bug in one
+         * formula, which is why the four cardinal directions are asserted in
+         * the test suite rather than left to inspection.
+         */
+        m->intendedYaw = (s16) (camYaw + 0x8000
+                                + atan2s(controller->stickY, controller->stickX));
         m->input |= INPUT_NONZERO_ANALOG;
     } else {
         /* No stick: intend to keep facing where we already face, so that code

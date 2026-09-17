@@ -14,12 +14,16 @@
  *   camfollow <0|1>          enable/disable camera auto-follow
  *   <frames> <sx> <sy> <buttons> [camturn]
  *                            hold this input for <frames> ticks
- *   mash <frames> <sx> <sy> <buttons> <period>
+ *   mash <frames> <sx> <sy> <buttons> <period> [flip]
  *                            tap the buttons for one frame every <period>
  *                            frames, for <frames> total. Chained moves need a
  *                            button *edge* inside a window that can be only a
  *                            few frames wide, so tapping is far more robust
  *                            than hand-counted frame numbers.
+ *                            The optional <flip> reverses the stick every that
+ *                            many frames, for manoeuvres where facing
+ *                            alternates -- a wall-kick shaft climb being the
+ *                            case it exists for.
  *
  * Stick values are the raw hardware range, -80..80, with +Y meaning "away from
  * the camera".  Buttons is any combination of the letters A, B, Z (or '-' for

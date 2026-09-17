@@ -280,8 +280,16 @@ static void test_jump_velocities(void) {
     sWorld.marioState.forwardVel = 32.0f;
     set_mario_action(&sWorld.marioState, ACT_DOUBLE_JUMP, 0);
     check_near(sWorld.marioState.vel[1], 52.0f + 8.0f, 0.001f, "double jump launches at 52");
-    check_near(sWorld.marioState.forwardVel, 0.0f, 0.001f,
-               "double jump zeroes forward speed (rises nearly vertically)");
+    /*
+     * This assertion previously demanded forwardVel == 0, which encoded a bug
+     * as if it were the specification: it made a running chain stop dead on the
+     * second jump. The suite passed precisely because it was asserting the
+     * wrong thing, which is the failure mode worth remembering here -- a test
+     * only protects behaviour you have actually confirmed.
+     * See test_double_jump_keeps_speed() for the behavioural check.
+     */
+    check_near(sWorld.marioState.forwardVel, 32.0f * 0.8f, 0.001f,
+               "double jump sheds a fifth of forward speed but keeps moving");
 
     setup_flat_world();
     sWorld.marioState.forwardVel = 30.0f;
@@ -703,6 +711,321 @@ static void test_wall_kick_window(void) {
           "A after two frames is too late to wall kick");
 }
 
+/* --- Regressions ------------------------------------------------------- */
+
+/*
+ * Stick direction must map to the world relative to the camera, in the
+ * orientation a player expects. This shipped mirrored on the horizontal axis --
+ * pushing right walked the player left -- which reads as the controls being
+ * broken rather than as one wrong sign, and is invisible in a level with
+ * symmetric geometry until you try to steer somewhere specific.
+ */
+static void test_stick_directions(void) {
+    struct {
+        s16 stickX;
+        s16 stickY;
+        const char *name;
+        s32 axis;      /* 0 = X, 2 = Z */
+        f32 sign;      /* expected direction of travel on that axis */
+    } cases[] = {
+        {   0,  80, "stick up moves away from the camera (north)", 2,  1.0f },
+        {   0, -80, "stick down moves toward the camera (south)",  2, -1.0f },
+        {  80,   0, "stick right moves right of the camera (east)", 0,  1.0f },
+        { -80,   0, "stick left moves left of the camera (west)",   0, -1.0f },
+    };
+    s32 i;
+
+    section("stick to world mapping");
+
+    for (i = 0; i < 4; i++) {
+        f32 start;
+        f32 moved;
+
+        setup_flat_world();
+        /* Camera due south of the player: away-from-camera is +Z. */
+        sWorld.camera.yaw = (s16) 0x8000;
+        sWorld.viewCam.yaw = (s16) 0x8000;
+
+        start = sWorld.marioState.pos[cases[i].axis];
+        step_world(cases[i].stickX, cases[i].stickY, 0, 25);
+        moved = sWorld.marioState.pos[cases[i].axis] - start;
+
+        check(moved * cases[i].sign > 100.0f, cases[i].name);
+    }
+
+    /* And the cross-axis must stay put: a pure right push must not drift
+     * forwards or backwards. */
+    setup_flat_world();
+    sWorld.camera.yaw = (s16) 0x8000;
+    sWorld.viewCam.yaw = (s16) 0x8000;
+    {
+        f32 startZ = sWorld.marioState.pos[2];
+
+        step_world(80, 0, 0, 25);
+        check(sWorld.marioState.pos[2] - startZ < 60.0f
+                  && sWorld.marioState.pos[2] - startZ > -60.0f,
+              "a pure sideways push does not drift along the camera axis");
+    }
+}
+
+
+
+/*
+ * These four all shipped broken and were reported from play rather than caught
+ * by the suite, so each gets a test that would have failed before the fix.
+ */
+
+static void test_double_jump_keeps_speed(void) {
+    section("double jump preserves momentum");
+
+    /*
+     * The double jump used to set forwardVel to zero, which stopped a running
+     * player dead in mid-air on the second jump of a chain.  It sheds a fifth
+     * of the speed; it does not kill it.
+     */
+    setup_flat_world();
+    sWorld.marioState.forwardVel = 30.0f;
+    set_mario_action(&sWorld.marioState, ACT_DOUBLE_JUMP, 0);
+    check(sWorld.marioState.forwardVel > 0.0f,
+          "a double jump does not zero forward speed");
+    check_near(sWorld.marioState.forwardVel, 24.0f, 0.001f,
+               "a double jump keeps 80 percent of forward speed");
+
+    /* And end to end: a chain run at speed must still be travelling at the
+     * end of the second jump. */
+    setup_flat_world();
+    step_world(0, 80, 0, 40);
+    {
+        f32 speedBefore = sWorld.marioState.forwardVel;
+        s32 i;
+
+        step_world(0, 80, A_BUTTON, 2);
+        for (i = 0; i < 60 && (sWorld.marioState.action & ACT_GROUP_MASK)
+                                  == ACT_GROUP_AIRBORNE; i++) {
+            step_world(0, 80, 0, 1);
+        }
+        step_world(0, 80, A_BUTTON, 2);
+        check(sWorld.marioState.action == ACT_DOUBLE_JUMP, "chain reached the double jump");
+        check(sWorld.marioState.forwardVel > speedBefore * 0.5f,
+              "the double jump in a running chain retains most of its speed");
+    }
+}
+
+/*
+ * A full 180 reversal at speed. This is the bug that made the character stand
+ * still: act_turning_around discarded the signal that deceleration had
+ * finished, so it never handed off to ACT_FINISH_TURNING_AROUND and fell
+ * through to braking instead.
+ */
+static void test_turnaround_completes(void) {
+    s32 i;
+    s32 sawTurning = FALSE;
+    s32 sawFinish = FALSE;
+    f32 speedBefore;
+
+    section("180 degree turnaround");
+
+    setup_flat_world();
+    sWorld.marioState.faceAngle[1] = 0; /* facing +Z */
+    step_world(0, 80, 0, 45);
+    speedBefore = sWorld.marioState.forwardVel;
+    check(speedBefore > 25.0f, "reached running speed before reversing");
+    check(sWorld.marioState.vel[2] > 0.0f, "moving along +Z to begin with");
+
+    /* Slam the stick the other way. */
+    for (i = 0; i < 110; i++) {
+        step_world(0, -80, 0, 1);
+        if (sWorld.marioState.action == ACT_TURNING_AROUND) {
+            sawTurning = TRUE;
+        }
+        if (sWorld.marioState.action == ACT_FINISH_TURNING_AROUND) {
+            sawFinish = TRUE;
+        }
+    }
+
+    check(sawTurning, "reversing the stick at speed enters ACT_TURNING_AROUND");
+    check(sawFinish, "the turnaround reaches ACT_FINISH_TURNING_AROUND");
+    check(sWorld.marioState.action == ACT_WALKING,
+          "the turnaround ends in ACT_WALKING, not standing still");
+    check(sWorld.marioState.action != ACT_IDLE && sWorld.marioState.action != ACT_BRAKING_STOP,
+          "the player does not end the reversal stopped");
+    check(sWorld.marioState.vel[2] < 0.0f, "now travelling along -Z: the reversal happened");
+    check(sWorld.marioState.forwardVel > 20.0f,
+          "speed is rebuilt in the new direction rather than lost");
+}
+
+/*
+ * The collision facing must not be flipped per frame during the turn -- only
+ * the displayed yaw is.  Flipping the real one made the velocity direction
+ * alternate every frame and the player go nowhere.
+ */
+static void test_turnaround_facing_is_stable(void) {
+    s32 i;
+    s32 flips = 0;
+    s16 previous;
+
+    section("turnaround facing stability");
+
+    setup_flat_world();
+    sWorld.marioState.faceAngle[1] = 0;
+    step_world(0, 80, 0, 45);
+
+    previous = sWorld.marioState.faceAngle[1];
+    for (i = 0; i < 80; i++) {
+        s16 delta;
+
+        step_world(0, -80, 0, 1);
+        delta = (s16) (sWorld.marioState.faceAngle[1] - previous);
+
+        /* Ground turning is capped at 0x800 per frame. Anything near a half
+         * turn in one frame is the facing being flipped outright. */
+        if (delta > 0x4000 || delta < -0x4000) {
+            flips++;
+        }
+        previous = sWorld.marioState.faceAngle[1];
+    }
+    check(flips == 0, "collision facing never jumps by half a turn in one frame");
+}
+
+/* A side flip had no launch velocity at all, so pressing A mid-turn did
+ * nothing visible. */
+static void test_side_flip(void) {
+    s32 i;
+
+    section("side flip out of a turnaround");
+
+    setup_flat_world();
+    sWorld.marioState.forwardVel = 20.0f;
+    set_mario_action(&sWorld.marioState, ACT_SIDE_FLIP, 0);
+    check_near(sWorld.marioState.vel[1], 62.0f, 0.001f,
+               "a side flip launches at 62, matching a backflip");
+
+    /* And by the real route: reverse at speed, then press A mid-turn. */
+    setup_flat_world();
+    sWorld.marioState.faceAngle[1] = 0;
+    step_world(0, 80, 0, 45);
+    for (i = 0; i < 40; i++) {
+        step_world(0, -80, 0, 1);
+        if (sWorld.marioState.action == ACT_TURNING_AROUND) {
+            break;
+        }
+    }
+    check(sWorld.marioState.action == ACT_TURNING_AROUND, "mid-turnaround");
+    step_world(0, -80, A_BUTTON, 1);
+    check(sWorld.marioState.action == ACT_SIDE_FLIP,
+          "A during a turnaround gives a side flip, not a plain jump");
+    check(sWorld.marioState.vel[1] > 50.0f, "the side flip actually leaves the ground");
+}
+
+/* --- Level integrity ---------------------------------------------------- */
+
+/*
+ * Geometry built with the wrong winding is not visibly wrong -- it is the wrong
+ * KIND of surface. A floor wound backwards becomes a ceiling: not standable and
+ * invisible from above, which from inside the level reads as geometry you fall
+ * straight through. The whole slope ladder shipped that way once, so the level
+ * now gets asserted rather than eyeballed.
+ */
+static void test_level_geometry(void) {
+    struct Surface *floor;
+    s32 i;
+    s32 floors = 0;
+    s32 ceils = 0;
+    s32 walls = 0;
+
+    section("demo level geometry");
+
+    m64_world_init(&sWorld);
+
+    /* Every landmark must have standable ground at it, or the demo scripts
+     * that warp there start by falling out of the world. */
+    for (i = 0; i < m64_level_landmark_count(); i++) {
+        const struct M64Landmark *lm = m64_level_landmark(i);
+        char label[96];
+        f32 height = find_floor(lm->pos[0], lm->pos[1] + 200.0f, lm->pos[2], &floor);
+
+        snprintf(label, sizeof(label), "landmark '%s' has ground under it", lm->name);
+        check(floor != NULL && height > FLOOR_LOWER_LIMIT_MISC, label);
+    }
+
+    /*
+     * Each ramp must be climbable: sample the middle of the slope and confirm
+     * there is a floor there, above the surrounding ground. A ramp built as a
+     * ceiling reports the ground plane instead.
+     */
+    {
+        static const char *const rampNames[6] = { "ramp_10deg",   "ramp_20deg",
+                                                  "ramp_30deg",   "ramp_45deg",
+                                                  "ramp_slippery", "ramp_ice" };
+
+        for (i = 0; i < 6; i++) {
+            const struct M64Landmark *lm = m64_level_landmark_by_name(rampNames[i]);
+            char label[96];
+            f32 height;
+
+            snprintf(label, sizeof(label), "%s exists", rampNames[i]);
+            check(lm != NULL, label);
+            if (lm == NULL) {
+                continue;
+            }
+
+            /* The approach landmark sits 350 short of the ramp foot, which
+             * climbs away along -Z; sample 750 further along, mid-slope. */
+            height = find_floor(lm->pos[0], 2000.0f, lm->pos[2] - 750.0f, &floor);
+
+            snprintf(label, sizeof(label), "%s is a standable slope, not a ceiling",
+                     rampNames[i]);
+            check(floor != NULL && height > 20.0f && floor->normal.y > 0.0f, label);
+        }
+    }
+
+    /* The wall-kick shafts must have walls facing into the gap, or there is
+     * nothing to kick off. */
+    {
+        static const char *const shaftNames[3] = { "shaft_narrow_in", "shaft_medium_in",
+                                                   "shaft_wide_in" };
+
+        for (i = 0; i < 3; i++) {
+            const struct M64Landmark *lm = m64_level_landmark_by_name(shaftNames[i]);
+            struct WallCollisionData col;
+            char label[96];
+
+            snprintf(label, sizeof(label), "%s exists", shaftNames[i]);
+            check(lm != NULL, label);
+            if (lm == NULL) {
+                continue;
+            }
+
+            col.x = lm->pos[0];
+            col.y = lm->pos[1] + 60.0f;
+            col.z = lm->pos[2];
+            col.radius = 50.0f;
+            col.offsetY = 0.0f;
+
+            snprintf(label, sizeof(label), "%s is beside a kickable wall", shaftNames[i]);
+            check(find_wall_collisions(&col) > 0, label);
+        }
+    }
+
+    /* A sanity census: the level should be a mix of all three surface kinds.
+     * An all-floors or all-ceilings level means the classifier or the winding
+     * has gone wrong wholesale. */
+    for (i = 0; i < m64_surface_count(); i++) {
+        struct Surface *surf = m64_surface_at(i);
+
+        if (surf->normal.y > 0.01f) {
+            floors++;
+        } else if (surf->normal.y < -0.01f) {
+            ceils++;
+        } else {
+            walls++;
+        }
+    }
+    check(floors > 50, "level has a substantial number of floor surfaces");
+    check(ceils > 20, "level has ceiling surfaces (solids are closed underneath)");
+    check(walls > 50, "level has wall surfaces");
+}
+
 /* --- Integration ------------------------------------------------------- */
 
 static void test_demo_level_runs(void) {
@@ -744,6 +1067,12 @@ int main(void) {
     test_crouch_moves();
     test_dive_threshold();
     test_wall_kick_window();
+    test_stick_directions();
+    test_double_jump_keeps_speed();
+    test_turnaround_completes();
+    test_turnaround_facing_is_stable();
+    test_side_flip();
+    test_level_geometry();
     test_demo_level_runs();
 
     printf("\n==================================\n");
