@@ -149,15 +149,30 @@ cmake --build build-win -j
 ./build/new64_tests
 ```
 
-163 assertions covering the substrate (angle quantisation, s16 truncation, the
+164 assertions covering the substrate (angle quantisation, s16 truncation, the
 floor buffer, wall pushout), the movement constants (every jump's launch
 velocity, terminal velocity, the walk speed cap, slope class thresholds, the
-jump chain, the wall kick window, the stick-to-world mapping), and the level's
-own geometry — that every ramp is a standable slope rather than an inside-out
-ceiling, and every landmark has ground under it.
+jump chain, the wall kick window), and the level's own geometry — that every
+ramp is a standable slope rather than an inside-out ceiling, and every landmark
+has ground under it.
+
+Two of those deserve a note, because both exist due to a test that was worse
+than useless:
+
+- **The stick-to-screen mapping is checked against rendered pixels.** The
+  obvious assertion — "stick right increases world X" — is only correct if you
+  already know the renderer's handedness. Get that wrong and the test and the
+  code agree with each other while the controls are inverted for whoever is
+  holding the pad, which is exactly what happened here. The test now renders a
+  frame from a fixed viewpoint and checks which side of the image the player
+  moved toward.
+- **Straight running must not drift.** The camera auto-follows the player's
+  facing, so any mismatch between what the stick asked for and where the camera
+  thinks "behind" is gets fed back every frame. Holding forward for 120 frames
+  has to stay within an eighth of a turn.
 
 The Linux and Windows builds are verified to produce **byte-identical** output:
-all 96 assertions pass on both, and every demo's state trace and every rendered
+all 164 assertions pass on both, and every demo's state trace and every rendered
 PNG and GIF match exactly across platforms. That is what `-ffp-contract=off` and
 the committed sine table are for — the physics must not depend on the compiler.
 
